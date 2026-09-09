@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">DeadFrameRemover</string>
+    <string name="select_video">Select Input Video</string>
+    <string name="selected_file">Selected: %1$s</string>
+    <string name="threshold_label">Duplicate MSE Threshold: %1$.1f</string>
+    <string name="threshold_description">Frames with Mean Squared Error below this threshold are dropped as duplicates/freezes.</string>
+    <string name="total_scanned">Total Scanned</string>
+    <string name="dropped_frames">Dropped (Dead)</string>
+    <string name="preserved_frames">Preserved (Real)</string>
+    <string name="drop_ratio">Drop Rate</string>
+    <string name="export_button">Export Clean Video</string>
+    <string name="cancel_button">Cancel Processing</string>
+    <string name="processing_title">Processing Video Pipeline…</string>
+    <string name="success_title">Video Export Completed</string>
+    <string name="audio_notice">Audio Strategy: Audio track is omitted to ensure linear PTS delta retiming without A/V desync.</string>
+</resources>

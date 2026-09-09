@@ -1,0 +1,29 @@
+package com.antigravity.deadframeremover.engine
+
+import java.nio.ByteBuffer
+
+object NativeComparator {
+    init {
+        System.loadLibrary("frame_comparator")
+    }
+
+    external fun compareYUVPlanes(
+        bufferPrev: ByteBuffer,
+        prevOffset: Int,
+        bufferCurr: ByteBuffer,
+        currOffset: Int,
+        width: Int,
+        height: Int,
+        yRowStride: Int,
+        yPixelStride: Int,
+        threshold: Double
+    ): Double
+
+    external fun normalizeYUV420ToNV12(
+        yBuffer: ByteBuffer, yOffset: Int, yRowStride: Int, yPixelStride: Int,
+        uBuffer: ByteBuffer, uOffset: Int, uRowStride: Int, uPixelStride: Int,
+        vBuffer: ByteBuffer, vOffset: Int, vRowStride: Int, vPixelStride: Int,
+        dstBuffer: ByteBuffer, dstOffset: Int,
+        width: Int, height: Int
+    ): Int
+}
