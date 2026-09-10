@@ -80,8 +80,8 @@ class FFmpegVideoExporter(private val context: Context) {
         FFmpegKitConfig.enableStatisticsCallback { stats ->
             // Progress estimation based on time/frames
             val timeMs = stats.time
-            if (timeMs > 0) {
-                onProgress((timeMs / 1000f % 100f) / 100f)
+            if (timeMs > 0.0) {
+                onProgress(((timeMs / 1000.0 % 100.0) / 100.0).toFloat())
             }
         }
 
