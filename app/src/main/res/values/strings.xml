@@ -14,4 +14,13 @@
     <string name="processing_title">Processing Video Pipeline…</string>
     <string name="success_title">Video Export Completed</string>
     <string name="audio_notice">Audio Strategy: Audio track is omitted to ensure linear PTS delta retiming without A/V desync.</string>
+
+    <string name="frame_inspector_title">Exact Frame Shower &amp; Selector</string>
+    <string name="analyze_frames">Analyze Video Frames</string>
+    <string name="ffmpeg_export">Export via FFmpeg</string>
+    <string name="mediacodec_export">Export via MediaCodec (NDK)</string>
+    <string name="copy_logs">Copy Entire Log to Clipboard</string>
+    <string name="view_logs">Logs &amp; Crash Catcher</string>
+    <string name="good_frame">Good (Keep)</string>
+    <string name="dead_frame">Dead / Duplicate (Drop)</string>
 </resources>

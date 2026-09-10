@@ -11,6 +11,8 @@ import android.net.Uri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import com.antigravity.deadframeremover.logging.AppLogManager
+import com.antigravity.deadframeremover.logging.LogLevel
 import java.io.File
 import java.nio.ByteBuffer
 import kotlin.coroutines.coroutineContext
@@ -168,6 +170,11 @@ class VideoProcessingEngine(private val context: Context) {
             encoder.start()
 
             safeMuxer = SafeMediaMuxer(outputFile.absolutePath)
+            AppLogManager.log(
+                LogLevel.INFO,
+                "MediaCodecPipeline",
+                "Pipeline initialized: ${width}x${height} @ ${frameRate}fps, threshold=$mseThreshold"
+            )
 
             val decBufferInfo = MediaCodec.BufferInfo()
             val encBufferInfo = MediaCodec.BufferInfo()
@@ -382,7 +389,17 @@ class VideoProcessingEngine(private val context: Context) {
                     isCompleted = true
                 )
             )
+            AppLogManager.log(
+                LogLevel.INFO,
+                "MediaCodecPipeline",
+                "MediaCodec transcode finished. Scanned: $totalScanned, Dropped: $droppedFrames, Preserved: $preservedFrames"
+            )
         } catch (e: Exception) {
+            AppLogManager.log(
+                LogLevel.ERROR,
+                "MediaCodecPipeline",
+                "MediaCodec transcode error: ${e.message}"
+            )
             onProgressUpdate(
                 ProcessingProgress(
                     progress = 0f,
