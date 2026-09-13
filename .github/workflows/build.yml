@@ -61,7 +61,8 @@ jobs:
         run: |
           RELEASE_APK=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
           cp "$RELEASE_APK" app/build/outputs/apk/release/DeadFrameRemover-v1.0.0-4kb.apk
-          gh release create v1.0.0-4kb app/build/outputs/apk/release/DeadFrameRemover-v1.0.0-4kb.apk \
+          gh release create v1.0.0-4kb \
             --title "DeadFrameRemover v1.0.0 (4KB Page Compatible)" \
             --notes "Production build with verified 4KB-compatible Arthenica FFmpegKit (pre-16KB) and crash-resilient C++ NDK MediaCodec engine." \
-            --clobber || true
+            --clobber \
+            app/build/outputs/apk/release/DeadFrameRemover-v1.0.0-4kb.apk || true
