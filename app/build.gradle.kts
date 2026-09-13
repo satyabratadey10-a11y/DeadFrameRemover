@@ -103,6 +103,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
     if (file("libs/ffmpeg-kit-full-6.0-2.aar").exists()) {
         implementation(files("libs/ffmpeg-kit-full-6.0-2.aar"))
