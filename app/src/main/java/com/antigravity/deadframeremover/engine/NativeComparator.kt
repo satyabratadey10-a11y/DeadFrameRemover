@@ -1,10 +1,22 @@
 package com.antigravity.deadframeremover.engine
 
+import com.antigravity.deadframeremover.logging.AppLogManager
+import com.antigravity.deadframeremover.logging.LogLevel
 import java.nio.ByteBuffer
 
 object NativeComparator {
+    var isLoaded = false
+        private set
+
     init {
-        System.loadLibrary("frame_comparator")
+        try {
+            System.loadLibrary("frame_comparator")
+            isLoaded = true
+            AppLogManager.log(LogLevel.INFO, "NativeComparator", "libframe_comparator.so loaded successfully.")
+        } catch (t: Throwable) {
+            isLoaded = false
+            AppLogManager.log(LogLevel.ERROR, "NativeComparator", "Failed to load libframe_comparator.so: ${t.message}")
+        }
     }
 
     external fun compareYUVPlanes(

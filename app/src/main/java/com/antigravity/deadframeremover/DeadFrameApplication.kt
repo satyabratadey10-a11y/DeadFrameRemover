@@ -7,7 +7,10 @@ import com.antigravity.deadframeremover.logging.CrashHandler
 class DeadFrameApplication : Application() {
     override fun onCreate() {
         super.onCreate()
-        CrashHandler.install(this)
-        AppLogManager.init(this)
+        try {
+            CrashHandler.install(this)
+            AppLogManager.init(this)
+        } catch (_: Throwable) {
+        }
     }
 }

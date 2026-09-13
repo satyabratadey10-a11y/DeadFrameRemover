@@ -70,6 +70,10 @@ class VideoProcessingEngine(private val context: Context) {
         mseThreshold: Double,
         onProgressUpdate: (ProcessingProgress) -> Unit
     ) = withContext(Dispatchers.Default) {
+        if (!NativeComparator.isLoaded) {
+            throw IllegalStateException("Native frame_comparator C++ engine could not be loaded.")
+        }
+
         var extractor: MediaExtractor? = null
         var decoder: MediaCodec? = null
         var encoder: MediaCodec? = null

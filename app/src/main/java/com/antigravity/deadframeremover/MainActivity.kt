@@ -271,9 +271,9 @@ class VideoProcessingViewModel : ViewModel() {
 class MainActivity : ComponentActivity() {
 
     private val viewModel: VideoProcessingViewModel by viewModels()
-    private lateinit var processingEngine: VideoProcessingEngine
-    private lateinit var ffmpegExporter: FFmpegVideoExporter
-    private lateinit var frameInspectorEngine: FrameInspectorEngine
+    private var processingEngine: VideoProcessingEngine? = null
+    private var ffmpegExporter: FFmpegVideoExporter? = null
+    private var frameInspectorEngine: FrameInspectorEngine? = null
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -286,12 +286,37 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        processingEngine = VideoProcessingEngine(applicationContext)
-        ffmpegExporter = FFmpegVideoExporter(applicationContext)
-        frameInspectorEngine = FrameInspectorEngine(applicationContext)
 
-        viewModel.checkCrashLog(this)
-        checkAndRequestPermissions()
+        try {
+            processingEngine = VideoProcessingEngine(applicationContext)
+        } catch (t: Throwable) {
+            AppLogManager.log(LogLevel.ERROR, "MainActivity", "VideoProcessingEngine init error: ${t.message}")
+        }
+
+        try {
+            frameInspectorEngine = FrameInspectorEngine(applicationContext)
+        } catch (t: Throwable) {
+            AppLogManager.log(LogLevel.ERROR, "MainActivity", "FrameInspectorEngine init error: ${t.message}")
+        }
+
+        try {
+            ffmpegExporter = FFmpegVideoExporter(applicationContext)
+        } catch (t: Throwable) {
+            AppLogManager.log(LogLevel.ERROR, "MainActivity", "FFmpegVideoExporter init error: ${t.message}")
+            ffmpegExporter = null
+        }
+
+        try {
+            viewModel.checkCrashLog(this)
+        } catch (t: Throwable) {
+            AppLogManager.log(LogLevel.ERROR, "MainActivity", "checkCrashLog error: ${t.message}")
+        }
+
+        try {
+            checkAndRequestPermissions()
+        } catch (t: Throwable) {
+            AppLogManager.log(LogLevel.ERROR, "MainActivity", "checkAndRequestPermissions error: ${t.message}")
+        }
 
         setContent {
             val darkTheme = isSystemInDarkTheme()
@@ -332,7 +357,8 @@ class MainActivity : ComponentActivity() {
                         viewModel.setThreshold(threshold)
                     },
                     onAnalyzeFrames = {
-                        viewModel.analyzeFrames(frameInspectorEngine)
+                        val engine = frameInspectorEngine ?: FrameInspectorEngine(applicationContext).also { frameInspectorEngine = it }
+                        viewModel.analyzeFrames(engine)
                     },
                     onToggleFrameSelection = { index ->
                         viewModel.toggleFrameSelection(index)
@@ -348,11 +374,23 @@ class MainActivity : ComponentActivity() {
                     },
                     onStartMediaCodecExport = {
                         val outputDir = getExternalFilesDir(null) ?: cacheDir
-                        viewModel.startMediaCodecExport(processingEngine, outputDir)
+                        val engine = processingEngine ?: VideoProcessingEngine(applicationContext).also { processingEngine = it }
+                        viewModel.startMediaCodecExport(engine, outputDir)
                     },
                     onStartFFmpegExport = {
                         val outputDir = getExternalFilesDir(null) ?: cacheDir
-                        viewModel.startFFmpegExport(ffmpegExporter, outputDir)
+                        val exporter = ffmpegExporter
+                        if (exporter != null && exporter.isAvailable) {
+                            viewModel.startFFmpegExport(exporter, outputDir)
+                        } else {
+                            Toast.makeText(
+                                this,
+                                "FFmpeg engine not available on this device. Using MediaCodec (NDK) Export.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            val engine = processingEngine ?: VideoProcessingEngine(applicationContext).also { processingEngine = it }
+                            viewModel.startMediaCodecExport(engine, outputDir)
+                        }
                     },
                     onCancelExport = {
                         viewModel.cancelProcessing()
