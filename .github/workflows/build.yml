@@ -39,12 +39,6 @@ jobs:
           gradle wrapper --gradle-version 8.7 --distribution-type bin
           chmod +x ./gradlew
 
-      - name: Download Official 4KB Arthenica FFmpegKit AAR
-        run: |
-          mkdir -p app/libs
-          curl -fL -o app/libs/ffmpeg-kit-full-6.0-2.aar https://maven.aliyun.com/repository/public/com/arthenica/ffmpeg-kit-full/6.0-2/ffmpeg-kit-full-6.0-2.aar
-          ls -lh app/libs/
-
       - name: Build Release APK
         run: ./gradlew assembleRelease --stacktrace
 
@@ -57,13 +51,13 @@ jobs:
       - name: Prepare Release APK Name
         run: |
           RELEASE_APK=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
-          cp "$RELEASE_APK" app/build/outputs/apk/release/DeadFrameRemover-v1.0.0-4kb.apk
+          cp "$RELEASE_APK" app/build/outputs/apk/release/DeadFrameRemover-v1.1.0.apk
 
       - name: Publish GitHub Release
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.0-4kb
-          name: "DeadFrameRemover v1.0.0 (4KB Page Compatible)"
-          body: "Production build with verified 4KB-compatible Arthenica FFmpegKit (pre-16KB) and crash-resilient C++ NDK MediaCodec engine."
-          files: app/build/outputs/apk/release/DeadFrameRemover-v1.0.0-4kb.apk
+          tag_name: v1.1.0-mediacodec
+          name: "DeadFrameRemover v1.1.0 (Hardware H.264 MediaCodec)"
+          body: "High-performance production build using pure native Hardware H.264 MediaCodec & C++ NDK engine. Zero heavy third-party dependencies, instant launch, 4KB/16KB kernel universal compatibility."
+          files: app/build/outputs/apk/release/DeadFrameRemover-v1.1.0.apk

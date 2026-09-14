@@ -23,7 +23,6 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.antigravity.deadframeremover.engine.FFmpegVideoExporter
 import com.antigravity.deadframeremover.engine.FrameInspectorEngine
 import com.antigravity.deadframeremover.engine.FrameItem
 import com.antigravity.deadframeremover.engine.ProcessingProgress
@@ -138,11 +137,11 @@ class VideoProcessingViewModel : ViewModel() {
         _uiState.update { it.copy(frames = updated) }
     }
 
-    fun startMediaCodecExport(engine: VideoProcessingEngine, outputDir: File) {
+    fun startExport(engine: VideoProcessingEngine, outputDir: File, useSelection: Boolean = false) {
         val currentUri = _uiState.value.selectedUri ?: return
         if (_uiState.value.isProcessing) return
 
-        val outputFile = File(outputDir, "cleaned_mediacodec_${System.currentTimeMillis()}.mp4")
+        val outputFile = File(outputDir, "cleaned_video_${System.currentTimeMillis()}.mp4")
 
         _uiState.update {
             it.copy(
@@ -151,14 +150,17 @@ class VideoProcessingViewModel : ViewModel() {
                 progress = ProcessingProgress()
             )
         }
-        AppLogManager.log(LogLevel.INFO, "Pipeline", "Starting MediaCodec NDK export to: ${outputFile.name}")
+        val frames = _uiState.value.frames
+        val exportType = if (useSelection && frames.isNotEmpty()) "Selective Frames" else "Threshold-Based"
+        AppLogManager.log(LogLevel.INFO, "Pipeline", "Starting H.264 MediaCodec export ($exportType) to: ${outputFile.name}")
 
         processingJob = viewModelScope.launch {
             try {
                 engine.processVideo(
                     inputUri = currentUri,
                     outputFile = outputFile,
-                    mseThreshold = _uiState.value.mseThreshold.toDouble()
+                    mseThreshold = _uiState.value.mseThreshold.toDouble(),
+                    selectedFrames = if (useSelection && frames.isNotEmpty()) frames else null
                 ) { progressUpdate ->
                     _uiState.update { it.copy(progress = progressUpdate) }
                 }
@@ -168,88 +170,13 @@ class VideoProcessingViewModel : ViewModel() {
                         exportedFile = outputFile
                     )
                 }
-                AppLogManager.log(LogLevel.INFO, "Pipeline", "MediaCodec NDK export finished successfully.")
+                AppLogManager.log(LogLevel.INFO, "Pipeline", "H.264 MediaCodec export completed successfully: ${outputFile.name}")
             } catch (e: Exception) {
                 AppLogManager.log(LogLevel.ERROR, "Pipeline", "MediaCodec export failed: ${e.message}")
                 _uiState.update {
                     it.copy(
                         isProcessing = false,
-                        progress = it.progress.copy(errorMessage = e.localizedMessage ?: "Processing error")
-                    )
-                }
-            }
-        }
-    }
-
-    fun startFFmpegExport(exporter: FFmpegVideoExporter, outputDir: File) {
-        val currentUri = _uiState.value.selectedUri ?: return
-        if (_uiState.value.isProcessing) return
-
-        val outputFile = File(outputDir, "cleaned_ffmpeg_${System.currentTimeMillis()}.mp4")
-
-        _uiState.update {
-            it.copy(
-                isProcessing = true,
-                exportedFile = null,
-                progress = ProcessingProgress()
-            )
-        }
-        AppLogManager.log(LogLevel.INFO, "Pipeline", "Starting FFmpeg export to: ${outputFile.name}")
-
-        processingJob = viewModelScope.launch {
-            try {
-                val frames = _uiState.value.frames
-                val success = if (frames.isNotEmpty()) {
-                    val selectedIndices = frames.filter { it.isSelected }.map { it.index }
-                    exporter.exportWithSelection(
-                        inputUri = currentUri,
-                        outputFile = outputFile,
-                        selectedIndices = selectedIndices,
-                        totalFrames = frames.size
-                    ) { ratio ->
-                        _uiState.update {
-                            it.copy(
-                                progress = it.progress.copy(
-                                    progress = ratio,
-                                    totalScanned = frames.size,
-                                    preservedFrames = selectedIndices.size,
-                                    droppedFrames = frames.size - selectedIndices.size
-                                )
-                            )
-                        }
-                    }
-                } else {
-                    exporter.exportWithMseThreshold(
-                        inputUri = currentUri,
-                        outputFile = outputFile,
-                        mseThreshold = _uiState.value.mseThreshold.toDouble()
-                    ) { ratio ->
-                        _uiState.update { it.copy(progress = it.progress.copy(progress = ratio)) }
-                    }
-                }
-
-                if (success) {
-                    _uiState.update {
-                        it.copy(
-                            isProcessing = false,
-                            exportedFile = outputFile,
-                            progress = it.progress.copy(progress = 1.0f, isCompleted = true)
-                        )
-                    }
-                } else {
-                    _uiState.update {
-                        it.copy(
-                            isProcessing = false,
-                            progress = it.progress.copy(errorMessage = "FFmpeg export failed. Check diagnostics log.")
-                        )
-                    }
-                }
-            } catch (e: Exception) {
-                AppLogManager.log(LogLevel.ERROR, "Pipeline", "FFmpeg export exception: ${e.message}")
-                _uiState.update {
-                    it.copy(
-                        isProcessing = false,
-                        progress = it.progress.copy(errorMessage = e.localizedMessage ?: "FFmpeg export error")
+                        progress = it.progress.copy(errorMessage = e.localizedMessage ?: "Export error")
                     )
                 }
             }
@@ -272,7 +199,6 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: VideoProcessingViewModel by viewModels()
     private var processingEngine: VideoProcessingEngine? = null
-    private var ffmpegExporter: FFmpegVideoExporter? = null
     private var frameInspectorEngine: FrameInspectorEngine? = null
 
     private val permissionLauncher = registerForActivityResult(
@@ -297,13 +223,6 @@ class MainActivity : ComponentActivity() {
             frameInspectorEngine = FrameInspectorEngine(applicationContext)
         } catch (t: Throwable) {
             AppLogManager.log(LogLevel.ERROR, "MainActivity", "FrameInspectorEngine init error: ${t.message}")
-        }
-
-        try {
-            ffmpegExporter = FFmpegVideoExporter(applicationContext)
-        } catch (t: Throwable) {
-            AppLogManager.log(LogLevel.ERROR, "MainActivity", "FFmpegVideoExporter init error: ${t.message}")
-            ffmpegExporter = null
         }
 
         try {
@@ -372,25 +291,10 @@ class MainActivity : ComponentActivity() {
                     onInvertSelection = {
                         viewModel.invertSelection()
                     },
-                    onStartMediaCodecExport = {
+                    onStartExport = { useSelection ->
                         val outputDir = getExternalFilesDir(null) ?: cacheDir
                         val engine = processingEngine ?: VideoProcessingEngine(applicationContext).also { processingEngine = it }
-                        viewModel.startMediaCodecExport(engine, outputDir)
-                    },
-                    onStartFFmpegExport = {
-                        val outputDir = getExternalFilesDir(null) ?: cacheDir
-                        val exporter = ffmpegExporter
-                        if (exporter != null && exporter.isAvailable) {
-                            viewModel.startFFmpegExport(exporter, outputDir)
-                        } else {
-                            Toast.makeText(
-                                this,
-                                "FFmpeg engine not available on this device. Using MediaCodec (NDK) Export.",
-                                Toast.LENGTH_LONG
-                            ).show()
-                            val engine = processingEngine ?: VideoProcessingEngine(applicationContext).also { processingEngine = it }
-                            viewModel.startMediaCodecExport(engine, outputDir)
-                        }
+                        viewModel.startExport(engine, outputDir, useSelection)
                     },
                     onCancelExport = {
                         viewModel.cancelProcessing()

@@ -64,8 +64,7 @@ fun MainScreen(
     onSelectAllGoodFrames: () -> Unit,
     onSelectAllFrames: () -> Unit,
     onInvertSelection: () -> Unit,
-    onStartMediaCodecExport: () -> Unit,
-    onStartFFmpegExport: () -> Unit,
+    onStartExport: (useSelection: Boolean) -> Unit,
     onCancelExport: () -> Unit,
     onOpenExportedVideo: (File) -> Unit,
     onClearCrashLog: () -> Unit,
@@ -539,30 +538,38 @@ fun MainScreen(
                         Text("Cancel Processing")
                     }
                 } else {
-                    // Button A: Real video exporter via FFmpeg
-                    Button(
-                        onClick = onStartFFmpegExport,
-                        enabled = selectedUri != null && !isAnalyzingFrames,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                    ) {
-                        Icon(imageVector = Icons.Default.AutoFixHigh, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            if (frames.isNotEmpty()) "Export Selected Frames via FFmpeg"
-                            else "Export Clean Video via FFmpeg"
-                        )
-                    }
+                    if (frames.isNotEmpty()) {
+                        Button(
+                            onClick = { onStartExport(true) },
+                            enabled = selectedUri != null && !isAnalyzingFrames,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                        ) {
+                            Icon(imageVector = Icons.Default.AutoFixHigh, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Export Selected Frames (H.264 MediaCodec)")
+                        }
 
-                    // Button B: Fast MediaCodec NDK hardware pipeline
-                    FilledTonalButton(
-                        onClick = onStartMediaCodecExport,
-                        enabled = selectedUri != null && !isAnalyzingFrames,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(imageVector = Icons.Default.Speed, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Export via MediaCodec (NDK Engine)")
+                        FilledTonalButton(
+                            onClick = { onStartExport(false) },
+                            enabled = selectedUri != null && !isAnalyzingFrames,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(imageVector = Icons.Default.Speed, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Auto-Drop Dead Frames (Threshold MediaCodec)")
+                        }
+                    } else {
+                        Button(
+                            onClick = { onStartExport(false) },
+                            enabled = selectedUri != null && !isAnalyzingFrames,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                        ) {
+                            Icon(imageVector = Icons.Default.Speed, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Export Clean MP4 (Hardware MediaCodec)")
+                        }
                     }
                 }
             }

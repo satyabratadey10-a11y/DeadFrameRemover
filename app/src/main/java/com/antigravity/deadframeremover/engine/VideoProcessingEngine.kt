@@ -68,11 +68,22 @@ class VideoProcessingEngine(private val context: Context) {
         inputUri: Uri,
         outputFile: File,
         mseThreshold: Double,
+        selectedFrames: List<FrameItem>? = null,
         onProgressUpdate: (ProcessingProgress) -> Unit
     ) = withContext(Dispatchers.Default) {
         if (!NativeComparator.isLoaded) {
             throw IllegalStateException("Native frame_comparator C++ engine could not be loaded.")
         }
+
+        val deselectedRanges = if (!selectedFrames.isNullOrEmpty()) {
+            val stepUs = if (selectedFrames.size > 1) {
+                (selectedFrames.last().ptsUs - selectedFrames.first().ptsUs) / (selectedFrames.size - 1)
+            } else 33_333L
+            val halfStep = maxOf(16_666L, stepUs / 2)
+            selectedFrames.filter { !it.isSelected }.map { item ->
+                (item.ptsUs - halfStep).coerceAtLeast(0L)..(item.ptsUs + halfStep)
+            }
+        } else emptyList()
 
         var extractor: MediaExtractor? = null
         var decoder: MediaCodec? = null
@@ -287,7 +298,11 @@ class VideoProcessingEngine(private val context: Context) {
                                 if (image != null) {
                                     try {
                                         val yPlane = image.planes[0]
-                                        val isDead = if (hasPrevFrame) {
+                                        val curPtsUs = decBufferInfo.presentationTimeUs
+                                        val isManuallyDropped = deselectedRanges.any { curPtsUs in it }
+                                        val isDead = if (isManuallyDropped) {
+                                            true
+                                        } else if (hasPrevFrame) {
                                             val mse = NativeComparator.compareYUVPlanes(
                                                 cachedPrevYBuffer!!, 0,
                                                 yPlane.buffer, yPlane.buffer.position(),
