@@ -38,4 +38,12 @@ object NativeComparator {
         dstBuffer: ByteBuffer, dstOffset: Int,
         width: Int, height: Int
     ): Int
+
+    external fun yuvToRgbBitmap(
+        yBuffer: ByteBuffer, yOffset: Int, yRowStride: Int, yPixelStride: Int,
+        uBuffer: ByteBuffer, uOffset: Int, uRowStride: Int, uPixelStride: Int,
+        vBuffer: ByteBuffer, vOffset: Int, vRowStride: Int, vPixelStride: Int,
+        srcWidth: Int, srcHeight: Int,
+        dstBitmap: android.graphics.Bitmap
+    ): Int
 }

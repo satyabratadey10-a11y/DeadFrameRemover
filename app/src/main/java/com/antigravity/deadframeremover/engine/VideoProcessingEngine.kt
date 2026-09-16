@@ -75,14 +75,8 @@ class VideoProcessingEngine(private val context: Context) {
             throw IllegalStateException("Native frame_comparator C++ engine could not be loaded.")
         }
 
-        val deselectedRanges = if (!selectedFrames.isNullOrEmpty()) {
-            val stepUs = if (selectedFrames.size > 1) {
-                (selectedFrames.last().ptsUs - selectedFrames.first().ptsUs) / (selectedFrames.size - 1)
-            } else 33_333L
-            val halfStep = maxOf(16_666L, stepUs / 2)
-            selectedFrames.filter { !it.isSelected }.map { item ->
-                (item.ptsUs - halfStep).coerceAtLeast(0L)..(item.ptsUs + halfStep)
-            }
+        val deselectedPts = if (!selectedFrames.isNullOrEmpty()) {
+            selectedFrames.filter { !it.isSelected }.map { it.ptsUs }
         } else emptyList()
 
         var extractor: MediaExtractor? = null
@@ -96,25 +90,6 @@ class VideoProcessingEngine(private val context: Context) {
         var totalScanned = 0
         var droppedFrames = 0
         var preservedFrames = 0
-
-        var lastOutputPtsUs = 0L
-        var prevKeptInputPtsUs = -1L
-        var firstKeptFrame = true
-
-        fun calculateNextPts(currentInputPtsUs: Long): Long {
-            if (firstKeptFrame) {
-                firstKeptFrame = false
-                prevKeptInputPtsUs = currentInputPtsUs
-                lastOutputPtsUs = 0L
-                return 0L
-            }
-            val deltaUs = currentInputPtsUs - prevKeptInputPtsUs
-            val sanitizedDeltaUs = maxOf(1000L, deltaUs)
-            val newPts = lastOutputPtsUs + sanitizedDeltaUs
-            lastOutputPtsUs = newPts
-            prevKeptInputPtsUs = currentInputPtsUs
-            return newPts
-        }
 
         try {
             extractor = MediaExtractor()
@@ -154,6 +129,7 @@ class VideoProcessingEngine(private val context: Context) {
             val frameRate = if (videoFormat.containsKey(MediaFormat.KEY_FRAME_RATE)) {
                 videoFormat.getInteger(MediaFormat.KEY_FRAME_RATE).coerceAtLeast(1)
             } else 30
+            val frameDurationUs = if (frameRate > 0) 1_000_000L / frameRate else 33_333L
 
             val bitRate = if (videoFormat.containsKey(MediaFormat.KEY_BIT_RATE)) {
                 videoFormat.getInteger(MediaFormat.KEY_BIT_RATE)
@@ -299,17 +275,23 @@ class VideoProcessingEngine(private val context: Context) {
                                     try {
                                         val yPlane = image.planes[0]
                                         val curPtsUs = decBufferInfo.presentationTimeUs
-                                        val isManuallyDropped = deselectedRanges.any { curPtsUs in it }
-                                        val isDead = if (isManuallyDropped) {
-                                            true
-                                        } else if (hasPrevFrame) {
-                                            val mse = NativeComparator.compareYUVPlanes(
+                                        val curYPos = yPlane.buffer.position()
+
+                                        val mse = if (hasPrevFrame) {
+                                            NativeComparator.compareYUVPlanes(
                                                 cachedPrevYBuffer!!, 0,
-                                                yPlane.buffer, yPlane.buffer.position(),
+                                                yPlane.buffer, curYPos,
                                                 width, height,
                                                 yPlane.rowStride, yPlane.pixelStride,
                                                 mseThreshold
                                             )
+                                        } else {
+                                            999.0
+                                        }
+
+                                        val isDead = if (deselectedPts.isNotEmpty()) {
+                                            deselectedPts.any { kotlin.math.abs(curPtsUs - it) < (frameDurationUs * 3 / 4) }
+                                        } else if (hasPrevFrame) {
                                             mse <= mseThreshold
                                         } else {
                                             false
@@ -318,8 +300,8 @@ class VideoProcessingEngine(private val context: Context) {
                                         if (isDead) {
                                             droppedFrames++
                                         } else {
+                                            val retimedPts = preservedFrames.toLong() * frameDurationUs
                                             preservedFrames++
-                                            val retimedPts = calculateNextPts(decBufferInfo.presentationTimeUs)
 
                                             // Cache Y plane for next comparison
                                             val yBuf = yPlane.buffer
@@ -328,10 +310,9 @@ class VideoProcessingEngine(private val context: Context) {
                                                 cachedPrevYBuffer = ByteBuffer.allocateDirect(yCapacity)
                                             }
                                             cachedPrevYBuffer!!.clear()
-                                            val curPos = yBuf.position()
                                             yBuf.position(0)
                                             cachedPrevYBuffer!!.put(yBuf)
-                                            yBuf.position(curPos)
+                                            yBuf.position(curYPos)
                                             cachedPrevYBuffer!!.flip()
                                             hasPrevFrame = true
 

@@ -1,4 +1,5 @@
 #include <jni.h>
+#include <android/bitmap.h>
 #include <cstdint>
 #include <cstring>
 #include <algorithm>
@@ -17,15 +18,31 @@ Java_com_antigravity_deadframeremover_engine_NativeComparator_compareYUVPlanes(
     jint height,
     jint yRowStride,
     jint yPixelStride,
-    jdouble threshold
+    jdouble /* threshold */
 ) {
     if (!bufferPrev || !bufferCurr) {
+        return 999999.0;
+    }
+
+    jlong prev_cap = env->GetDirectBufferCapacity(bufferPrev);
+    jlong curr_cap = env->GetDirectBufferCapacity(bufferCurr);
+    if (prev_cap < 0 || curr_cap < 0) {
         return 999999.0;
     }
 
     const auto* prev_base = static_cast<const uint8_t*>(env->GetDirectBufferAddress(bufferPrev));
     const auto* curr_base = static_cast<const uint8_t*>(env->GetDirectBufferAddress(bufferCurr));
     if (!prev_base || !curr_base) {
+        return 999999.0;
+    }
+
+    if (prevOffset < 0 || currOffset < 0 || width <= 0 || height <= 0) {
+        return 999999.0;
+    }
+
+    jlong max_prev_needed = static_cast<jlong>(prevOffset) + static_cast<jlong>(height - 1) * yRowStride + static_cast<jlong>(width - 1) * yPixelStride;
+    jlong max_curr_needed = static_cast<jlong>(currOffset) + static_cast<jlong>(height - 1) * yRowStride + static_cast<jlong>(width - 1) * yPixelStride;
+    if (max_prev_needed >= prev_cap || max_curr_needed >= curr_cap) {
         return 999999.0;
     }
 
@@ -37,7 +54,6 @@ Java_com_antigravity_deadframeremover_engine_NativeComparator_compareYUVPlanes(
     uint64_t total_samples = static_cast<uint64_t>(sampled_rows) * sampled_cols;
     if (total_samples == 0) return 0.0;
 
-    uint64_t max_allowed_sum_sq = static_cast<uint64_t>(threshold * static_cast<double>(total_samples));
     uint64_t sum_sq = 0;
 
     for (int y = 0; y < height; y += 2) {
@@ -46,10 +62,6 @@ Java_com_antigravity_deadframeremover_engine_NativeComparator_compareYUVPlanes(
         for (int x = 0; x < width; x += 2) {
             int32_t diff = static_cast<int32_t>(row_p[x * yPixelStride]) - static_cast<int32_t>(row_c[x * yPixelStride]);
             sum_sq += static_cast<uint64_t>(diff * diff);
-        }
-        // Early exit: if accumulated sum_sq already exceeds max allowed for duplicate
-        if (sum_sq > max_allowed_sum_sq) {
-            return static_cast<jdouble>(sum_sq) / static_cast<double>(total_samples);
         }
     }
 
@@ -67,13 +79,30 @@ Java_com_antigravity_deadframeremover_engine_NativeComparator_normalizeYUV420ToN
     jint width, jint height
 ) {
     if (!yBuffer || !uBuffer || !vBuffer || !dstBuffer) return -1;
+    if (width <= 0 || height <= 0 || yOffset < 0 || uOffset < 0 || vOffset < 0 || dstOffset < 0) return -2;
+
+    jlong y_cap   = env->GetDirectBufferCapacity(yBuffer);
+    jlong u_cap   = env->GetDirectBufferCapacity(uBuffer);
+    jlong v_cap   = env->GetDirectBufferCapacity(vBuffer);
+    jlong dst_cap = env->GetDirectBufferCapacity(dstBuffer);
+
+    jlong dst_needed = static_cast<jlong>(dstOffset) + static_cast<jlong>(width) * height * 3 / 2;
+    if (dst_cap < dst_needed) return -3;
+
+    jlong y_needed = static_cast<jlong>(yOffset) + static_cast<jlong>(height - 1) * yRowStride + static_cast<jlong>(width - 1) * yPixelStride;
+    int uv_height = height / 2;
+    int uv_width  = width / 2;
+    jlong u_needed = static_cast<jlong>(uOffset) + static_cast<jlong>(uv_height - 1) * uRowStride + static_cast<jlong>(uv_width - 1) * uPixelStride;
+    jlong v_needed = static_cast<jlong>(vOffset) + static_cast<jlong>(uv_height - 1) * vRowStride + static_cast<jlong>(uv_width - 1) * vPixelStride;
+
+    if (y_cap < y_needed || u_cap < u_needed || v_cap < v_needed) return -4;
 
     const auto* y_base = static_cast<const uint8_t*>(env->GetDirectBufferAddress(yBuffer));
     const auto* u_base = static_cast<const uint8_t*>(env->GetDirectBufferAddress(uBuffer));
     const auto* v_base = static_cast<const uint8_t*>(env->GetDirectBufferAddress(vBuffer));
     auto* dst_base     = static_cast<uint8_t*>(env->GetDirectBufferAddress(dstBuffer));
 
-    if (!y_base || !u_base || !v_base || !dst_base) return -2;
+    if (!y_base || !u_base || !v_base || !dst_base) return -5;
 
     const uint8_t* y_src = y_base + yOffset;
     const uint8_t* u_src = u_base + uOffset;
@@ -96,9 +125,6 @@ Java_com_antigravity_deadframeremover_engine_NativeComparator_normalizeYUV420ToN
 
     // 2. Explicit UV Interleaved Plane Packing (width * (height / 2))
     uint8_t* dst_uv = dst + (width * height);
-    int uv_height = height / 2;
-    int uv_width  = width / 2;
-
     for (int r = 0; r < uv_height; ++r) {
         const uint8_t* u_row = u_src + (r * uRowStride);
         const uint8_t* v_row = v_src + (r * vRowStride);
@@ -109,6 +135,79 @@ Java_com_antigravity_deadframeremover_engine_NativeComparator_normalizeYUV420ToN
         }
     }
 
+    return 0;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_antigravity_deadframeremover_engine_NativeComparator_yuvToRgbBitmap(
+    JNIEnv* env,
+    jobject /* thiz */,
+    jobject yBuffer, jint yOffset, jint yRowStride, jint yPixelStride,
+    jobject uBuffer, jint uOffset, jint uRowStride, jint uPixelStride,
+    jobject vBuffer, jint vOffset, jint vRowStride, jint vPixelStride,
+    jint srcWidth, jint srcHeight,
+    jobject dstBitmap
+) {
+    if (!yBuffer || !uBuffer || !vBuffer || !dstBitmap) return -1;
+    if (srcWidth <= 0 || srcHeight <= 0) return -2;
+
+    AndroidBitmapInfo info;
+    if (AndroidBitmap_getInfo(env, dstBitmap, &info) < 0) return -3;
+    if (info.format != ANDROID_BITMAP_FORMAT_RGBA_8888) return -4;
+
+    void* pixels = nullptr;
+    if (AndroidBitmap_lockPixels(env, dstBitmap, &pixels) < 0 || !pixels) return -5;
+
+    const auto* y_base = static_cast<const uint8_t*>(env->GetDirectBufferAddress(yBuffer));
+    const auto* u_base = static_cast<const uint8_t*>(env->GetDirectBufferAddress(uBuffer));
+    const auto* v_base = static_cast<const uint8_t*>(env->GetDirectBufferAddress(vBuffer));
+
+    if (!y_base || !u_base || !v_base) {
+        AndroidBitmap_unlockPixels(env, dstBitmap);
+        return -6;
+    }
+
+    const uint8_t* y_src = y_base + yOffset;
+    const uint8_t* u_src = u_base + uOffset;
+    const uint8_t* v_src = v_base + vOffset;
+
+    int dstWidth  = static_cast<int>(info.width);
+    int dstHeight = static_cast<int>(info.height);
+    uint32_t strideBytes = info.stride;
+
+    for (int dy = 0; dy < dstHeight; ++dy) {
+        int sy = (dy * srcHeight) / dstHeight;
+        int uv_y = (sy / 2);
+        const uint8_t* row_y = y_src + (sy * yRowStride);
+        const uint8_t* row_u = u_src + (uv_y * uRowStride);
+        const uint8_t* row_v = v_src + (uv_y * vRowStride);
+
+        auto* out_row = reinterpret_cast<uint8_t*>(pixels) + (dy * strideBytes);
+
+        for (int dx = 0; dx < dstWidth; ++dx) {
+            int sx = (dx * srcWidth) / dstWidth;
+            int uv_x = (sx / 2);
+
+            int y_val = static_cast<int>(row_y[sx * yPixelStride]);
+            int u_val = static_cast<int>(row_u[uv_x * uPixelStride]);
+            int v_val = static_cast<int>(row_v[uv_x * vPixelStride]);
+
+            int c = y_val - 16;
+            int d = u_val - 128;
+            int e = v_val - 128;
+
+            int r = (298 * c + 409 * e + 128) >> 8;
+            int g = (298 * c - 100 * d - 208 * e + 128) >> 8;
+            int b = (298 * c + 516 * d + 128) >> 8;
+
+            out_row[dx * 4 + 0] = static_cast<uint8_t>(std::clamp(r, 0, 255));
+            out_row[dx * 4 + 1] = static_cast<uint8_t>(std::clamp(g, 0, 255));
+            out_row[dx * 4 + 2] = static_cast<uint8_t>(std::clamp(b, 0, 255));
+            out_row[dx * 4 + 3] = 0xFF;
+        }
+    }
+
+    AndroidBitmap_unlockPixels(env, dstBitmap);
     return 0;
 }
 

@@ -2,14 +2,19 @@ package com.antigravity.deadframeremover.engine
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.media.MediaMetadataRetriever
+import android.media.MediaCodec
+import android.media.MediaCodecInfo
+import android.media.MediaExtractor
+import android.media.MediaFormat
 import android.net.Uri
-import android.os.Build
 import com.antigravity.deadframeremover.logging.AppLogManager
 import com.antigravity.deadframeremover.logging.LogLevel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import java.nio.ByteBuffer
 import java.util.Locale
+import kotlin.coroutines.coroutineContext
 
 data class FrameItem(
     val index: Int,
@@ -26,123 +31,191 @@ class FrameInspectorEngine(private val context: Context) {
     suspend fun analyzeFrames(
         inputUri: Uri,
         mseThreshold: Double,
-        maxFramesToSample: Int = 80,
+        maxFramesToSample: Int = 120,
         onProgress: (Float, Int, Int) -> Unit
     ): List<FrameItem> = withContext(Dispatchers.Default) {
         val frameList = mutableListOf<FrameItem>()
-        val retriever = MediaMetadataRetriever()
+        var extractor: MediaExtractor? = null
+        var decoder: MediaCodec? = null
+        var cachedPrevY: ByteBuffer? = null
 
         try {
-            retriever.setDataSource(context, inputUri)
-            val durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-            val durationMs = durationStr?.toLongOrNull() ?: 5000L
-            val durationUs = durationMs * 1000L
+            extractor = MediaExtractor()
+            val afd = context.contentResolver.openAssetFileDescriptor(inputUri, "r")
+                ?: throw IllegalArgumentException("Failed to open file descriptor for: $inputUri")
+            afd.use { d ->
+                extractor.setDataSource(d.fileDescriptor, d.startOffset, d.length)
+            }
 
-            val stepUs = (durationUs / maxFramesToSample.coerceAtLeast(1)).coerceAtLeast(33_333L)
-            var prevBitmap: Bitmap? = null
+            var videoTrackIndex = -1
+            var videoFormat: MediaFormat? = null
+            for (i in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(i)
+                val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
+                if (mime.startsWith("video/")) {
+                    videoTrackIndex = i
+                    videoFormat = format
+                    break
+                }
+            }
+
+            if (videoTrackIndex < 0 || videoFormat == null) {
+                throw IllegalArgumentException("No video track found in input file.")
+            }
+
+            extractor.selectTrack(videoTrackIndex)
+
+            val width = videoFormat.getInteger(MediaFormat.KEY_WIDTH)
+            val height = videoFormat.getInteger(MediaFormat.KEY_HEIGHT)
+            val decoderMime = videoFormat.getString(MediaFormat.KEY_MIME)!!
+
+            decoder = MediaCodec.createDecoderByType(decoderMime)
+            videoFormat.setInteger(
+                MediaFormat.KEY_COLOR_FORMAT,
+                MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible
+            )
+            decoder.configure(videoFormat, null, null, 0)
+            decoder.start()
 
             AppLogManager.log(
                 LogLevel.INFO,
                 "FrameInspector",
-                "Analyzing frames for visual inspection: duration=${durationMs}ms, sampling up to $maxFramesToSample frames."
+                "Starting hardware MediaCodec frame analysis: ${width}x${height}, maxFrames=$maxFramesToSample, threshold=$mseThreshold"
             )
 
+            val bufferInfo = MediaCodec.BufferInfo()
+            var isExtractorEos = false
+            var isDecoderEos = false
             var frameIndex = 0
-            var currentUs = 0L
 
-            while (currentUs < durationUs && frameIndex < maxFramesToSample) {
-                val rawBitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-                    retriever.getScaledFrameAtTime(
-                        currentUs,
-                        MediaMetadataRetriever.OPTION_CLOSEST,
-                        180,
-                        120
-                    )
-                } else {
-                    retriever.getFrameAtTime(currentUs, MediaMetadataRetriever.OPTION_CLOSEST)
+            while (!isDecoderEos && frameIndex < maxFramesToSample && coroutineContext.isActive) {
+                // 1. Feed input from MediaExtractor into decoder
+                if (!isExtractorEos) {
+                    val inIndex = decoder.dequeueInputBuffer(10_000L)
+                    if (inIndex >= 0) {
+                        val inBuf = decoder.getInputBuffer(inIndex)
+                        if (inBuf != null) {
+                            inBuf.clear()
+                            val sampleSize = extractor.readSampleData(inBuf, 0)
+                            if (sampleSize < 0) {
+                                decoder.queueInputBuffer(inIndex, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                                isExtractorEos = true
+                            } else {
+                                val pts = extractor.sampleTime
+                                decoder.queueInputBuffer(inIndex, 0, sampleSize, pts, 0)
+                                extractor.advance()
+                            }
+                        }
+                    }
                 }
 
-                if (rawBitmap != null) {
-                    val scaled = if (rawBitmap.width > 200 || rawBitmap.height > 150) {
-                        Bitmap.createScaledBitmap(rawBitmap, 180, 120, true)
-                    } else {
-                        rawBitmap
+                // 2. Dequeue output from decoder
+                val outIndex = decoder.dequeueOutputBuffer(bufferInfo, 10_000L)
+                when {
+                    outIndex == MediaCodec.INFO_TRY_AGAIN_LATER || outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                        // Continue loop
                     }
+                    outIndex >= 0 -> {
+                        val isEos = (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
+                        if (isEos) {
+                            isDecoderEos = true
+                            decoder.releaseOutputBuffer(outIndex, false)
+                            break
+                        }
 
-                    val mse: Double
-                    val isDead: Boolean
+                        val image = decoder.getOutputImage(outIndex)
+                        if (image != null) {
+                            try {
+                                val yPlane = image.planes[0]
+                                val uPlane = image.planes[1]
+                                val vPlane = image.planes[2]
 
-                    if (prevBitmap != null) {
-                        mse = computeBitmapMSE(prevBitmap, scaled)
-                        isDead = mse <= mseThreshold
-                    } else {
-                        mse = 99.0 // First frame is baseline
-                        isDead = false
+                                val yBuf = yPlane.buffer
+                                val curYPos = yBuf.position()
+
+                                val mse: Double
+                                val isDead: Boolean
+
+                                if (cachedPrevY != null && NativeComparator.isLoaded) {
+                                    mse = NativeComparator.compareYUVPlanes(
+                                        cachedPrevY!!, 0,
+                                        yBuf, curYPos,
+                                        width, height,
+                                        yPlane.rowStride, yPlane.pixelStride,
+                                        mseThreshold
+                                    )
+                                    isDead = mse <= mseThreshold
+                                } else {
+                                    mse = 999.0 // First frame is baseline
+                                    isDead = false
+                                }
+
+                                // Create thumbnail Bitmap using fast native renderer
+                                val thumbBitmap = Bitmap.createBitmap(180, 120, Bitmap.Config.ARGB_8888)
+                                if (NativeComparator.isLoaded) {
+                                    NativeComparator.yuvToRgbBitmap(
+                                        yBuf, curYPos, yPlane.rowStride, yPlane.pixelStride,
+                                        uPlane.buffer, uPlane.buffer.position(), uPlane.rowStride, uPlane.pixelStride,
+                                        vPlane.buffer, vPlane.buffer.position(), vPlane.rowStride, vPlane.pixelStride,
+                                        width, height,
+                                        thumbBitmap
+                                    )
+                                }
+
+                                // Cache current Y plane for next consecutive frame comparison
+                                val yCap = yBuf.capacity()
+                                if (cachedPrevY == null || cachedPrevY!!.capacity() < yCap) {
+                                    cachedPrevY = ByteBuffer.allocateDirect(yCap)
+                                }
+                                cachedPrevY!!.clear()
+                                yBuf.position(0)
+                                cachedPrevY!!.put(yBuf)
+                                yBuf.position(curYPos)
+                                cachedPrevY!!.flip()
+
+                                val curPtsUs = bufferInfo.presentationTimeUs
+                                val seconds = curPtsUs / 1_000_000f
+                                val formatted = String.format(Locale.US, "%02d:%05.2f", (seconds / 60).toInt(), seconds % 60)
+
+                                val item = FrameItem(
+                                    index = frameIndex,
+                                    ptsUs = curPtsUs,
+                                    formattedTime = formatted,
+                                    mse = mse,
+                                    isDead = isDead,
+                                    bitmap = thumbBitmap,
+                                    isSelected = !isDead
+                                )
+                                frameList.add(item)
+                                frameIndex++
+
+                                val progressRatio = (frameIndex.toFloat() / maxFramesToSample).coerceIn(0f, 1f)
+                                onProgress(progressRatio, frameIndex, maxFramesToSample)
+
+                            } finally {
+                                image.close()
+                                decoder.releaseOutputBuffer(outIndex, false)
+                            }
+                        } else {
+                            decoder.releaseOutputBuffer(outIndex, false)
+                        }
                     }
-
-                    val seconds = currentUs / 1_000_000f
-                    val formatted = String.format(Locale.US, "%02d:%05.2f", (seconds / 60).toInt(), seconds % 60)
-
-                    val item = FrameItem(
-                        index = frameIndex,
-                        ptsUs = currentUs,
-                        formattedTime = formatted,
-                        mse = mse,
-                        isDead = isDead,
-                        bitmap = scaled,
-                        isSelected = !isDead
-                    )
-                    frameList.add(item)
-                    prevBitmap = scaled
-
-                    frameIndex++
-                    onProgress(currentUs.toFloat() / durationUs, frameIndex, maxFramesToSample)
                 }
-
-                currentUs += stepUs
             }
 
             AppLogManager.log(
                 LogLevel.INFO,
                 "FrameInspector",
-                "Frame analysis complete. Total: ${frameList.size}, Good: ${frameList.count { !it.isDead }}, Dead: ${frameList.count { it.isDead }}"
+                "Frame analysis complete. Scanned: ${frameList.size} consecutive frames. Dead: ${frameList.count { it.isDead }}, Good: ${frameList.count { !it.isDead }}"
             )
         } catch (e: Exception) {
-            AppLogManager.log(LogLevel.ERROR, "FrameInspector", "Failed to extract frames: ${e.message}")
+            AppLogManager.log(LogLevel.ERROR, "FrameInspector", "Failed to analyze frames: ${e.message}")
         } finally {
-            try {
-                retriever.release()
-            } catch (_: Exception) {
-            }
+            try { decoder?.stop() } catch (_: Exception) {}
+            try { decoder?.release() } catch (_: Exception) {}
+            try { extractor?.release() } catch (_: Exception) {}
         }
 
         frameList
-    }
-
-    private fun computeBitmapMSE(prev: Bitmap, curr: Bitmap): Double {
-        val width = minOf(prev.width, curr.width)
-        val height = minOf(prev.height, curr.height)
-        if (width <= 0 || height <= 0) return 0.0
-
-        var sumSq = 0L
-        var samples = 0L
-
-        // Subsampled 2x2 stride for speed
-        for (y in 0 until height step 2) {
-            for (x in 0 until width step 2) {
-                val p1 = prev.getPixel(x, y)
-                val p2 = curr.getPixel(x, y)
-
-                // Fast integer luminance formula: (77*R + 150*G + 29*B) >> 8
-                val y1 = (77 * ((p1 shr 16) and 0xFF) + 150 * ((p1 shr 8) and 0xFF) + 29 * (p1 and 0xFF)) shr 8
-                val y2 = (77 * ((p2 shr 16) and 0xFF) + 150 * ((p2 shr 8) and 0xFF) + 29 * (p2 and 0xFF)) shr 8
-
-                val diff = y1 - y2
-                sumSq += (diff * diff).toLong()
-                samples++
-            }
-        }
-
-        return if (samples > 0) sumSq.toDouble() / samples else 0.0
     }
 }

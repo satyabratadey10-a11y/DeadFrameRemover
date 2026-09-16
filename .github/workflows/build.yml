@@ -51,13 +51,13 @@ jobs:
       - name: Prepare Release APK Name
         run: |
           RELEASE_APK=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
-          cp "$RELEASE_APK" app/build/outputs/apk/release/DeadFrameRemover-v1.1.0.apk
+          cp "$RELEASE_APK" app/build/outputs/apk/release/DeadFrameRemover-v1.2.0.apk
 
       - name: Publish GitHub Release
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.1.0-mediacodec
-          name: "DeadFrameRemover v1.1.0 (Hardware H.264 MediaCodec)"
-          body: "High-performance production build using pure native Hardware H.264 MediaCodec & C++ NDK engine. Zero heavy third-party dependencies, instant launch, 4KB/16KB kernel universal compatibility."
-          files: app/build/outputs/apk/release/DeadFrameRemover-v1.1.0.apk
+          tag_name: v1.2.0-mediacodec
+          name: "DeadFrameRemover v1.2.0 (Accurate Frame Detection & Freeze-Free Export)"
+          body: "High-performance release featuring hardware MediaCodec consecutive frame inspection, true full-frame MSE comparator, and smooth freeze-free MP4 export timeline."
+          files: app/build/outputs/apk/release/DeadFrameRemover-v1.2.0.apk

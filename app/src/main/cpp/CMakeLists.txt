@@ -12,7 +12,9 @@ add_library(frame_comparator SHARED
 )
 
 find_library(log-lib log)
+find_library(jnigraphics-lib jnigraphics)
 
 target_link_libraries(frame_comparator
     ${log-lib}
+    ${jnigraphics-lib}
 )

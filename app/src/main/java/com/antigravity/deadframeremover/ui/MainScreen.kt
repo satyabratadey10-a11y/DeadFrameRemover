@@ -248,7 +248,7 @@ fun MainScreen(
                     }
 
                     Text(
-                        text = "Frames with Mean Squared Error ≤ threshold are dropped as duplicates/freezes. Lower values (0.5–1.5) target pure frozen frames. Higher values (2.0–5.0) drop subtle static frames.",
+                        text = "Frames with Mean Squared Error ≤ threshold are dropped as duplicates/freezes. Lower values (0.5–2.0) target pure frozen screen recordings. Standard values (3.0–8.0) target camera H.264 video. Higher values (10.0–30.0) catch noisy or dark scenes.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -256,8 +256,8 @@ fun MainScreen(
                     Slider(
                         value = mseThreshold,
                         onValueChange = onThresholdChange,
-                        valueRange = 0.1f..10.0f,
-                        steps = 98,
+                        valueRange = 0.5f..40.0f,
+                        steps = 78,
                         enabled = !isProcessing && !isAnalyzingFrames
                     )
                 }
