@@ -248,7 +248,7 @@ fun MainScreen(
                     }
 
                     Text(
-                        text = "Frames with Mean Squared Error ≤ threshold are dropped as duplicates/freezes. Lower values (0.5–2.0) target pure frozen screen recordings. Standard values (3.0–8.0) target camera H.264 video. Higher values (10.0–30.0) catch noisy or dark scenes.",
+                        text = "Frames with Mean Squared Error ≤ threshold are dropped as duplicates/freezes. For screen recordings & games, 0.5–2.0 is ideal to drop exact duplicate freezes. For camera videos, 2.0–5.0 catches subtle compression duplicates.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -256,8 +256,8 @@ fun MainScreen(
                     Slider(
                         value = mseThreshold,
                         onValueChange = onThresholdChange,
-                        valueRange = 0.5f..40.0f,
-                        steps = 78,
+                        valueRange = 0.1f..25.0f,
+                        steps = 248,
                         enabled = !isProcessing && !isAnalyzingFrames
                     )
                 }
@@ -608,9 +608,10 @@ private fun FrameCardItem(
     frame: FrameItem,
     onToggle: () -> Unit
 ) {
-    val borderColor = if (frame.isDead) Color(0xFFE53935) else Color(0xFF43A047)
-    val badgeBg = if (frame.isDead) Color(0xFFE53935).copy(alpha = 0.15f) else Color(0xFF43A047).copy(alpha = 0.15f)
-    val badgeText = if (frame.isDead) "DEAD (DROP)" else "GOOD (KEEP)"
+    val borderColor = if (frame.isSelected) Color(0xFF43A047) else Color(0xFFE53935)
+    val badgeBg = if (frame.isSelected) Color(0xFF43A047).copy(alpha = 0.15f) else Color(0xFFE53935).copy(alpha = 0.15f)
+    val badgeText = if (frame.isSelected) "KEEP" else "DROP"
+    val detectTag = if (frame.isDead) "Duplicate" else "Motion"
 
     Card(
         modifier = Modifier
@@ -646,7 +647,7 @@ private fun FrameCardItem(
                     color = badgeBg
                 ) {
                     Text(
-                        text = badgeText,
+                        text = "$badgeText ($detectTag)",
                         color = borderColor,
                         fontWeight = FontWeight.Bold,
                         fontSize = 9.sp,
@@ -695,7 +696,7 @@ private fun FrameCardItem(
                         text = if (frame.index == 0) "Base" else String.format(Locale.US, "MSE: %.1f", frame.mse),
                         fontSize = 10.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = borderColor
+                        color = if (frame.isDead) Color(0xFFE53935) else Color(0xFF43A047)
                     )
                 }
 
@@ -703,7 +704,8 @@ private fun FrameCardItem(
                     checked = frame.isSelected,
                     onCheckedChange = { onToggle() },
                     colors = CheckboxDefaults.colors(
-                        checkedColor = if (frame.isDead) Color(0xFFE53935) else Color(0xFF43A047)
+                        checkedColor = Color(0xFF43A047),
+                        uncheckedColor = Color(0xFFE53935)
                     )
                 )
             }

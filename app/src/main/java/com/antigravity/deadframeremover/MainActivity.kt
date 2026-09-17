@@ -41,7 +41,7 @@ import java.io.File
 data class MainUiState(
     val selectedUri: Uri? = null,
     val selectedFileName: String? = null,
-    val mseThreshold: Float = 6.0f,
+    val mseThreshold: Float = 1.5f,
     val isProcessing: Boolean = false,
     val isAnalyzingFrames: Boolean = false,
     val frames: List<FrameItem> = emptyList(),
@@ -97,7 +97,7 @@ class VideoProcessingViewModel : ViewModel() {
                 val extracted = engine.analyzeFrames(
                     inputUri = currentUri,
                     mseThreshold = _uiState.value.mseThreshold.toDouble(),
-                    maxFramesToSample = 120
+                    maxFramesToSample = 240
                 ) { _, _, _ -> }
 
                 _uiState.update {

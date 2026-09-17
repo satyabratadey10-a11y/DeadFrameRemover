@@ -1,6 +1,7 @@
 package com.antigravity.deadframeremover.engine
 
 import android.content.Context
+import android.content.res.AssetFileDescriptor
 import android.media.Image
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
@@ -55,7 +56,21 @@ class VideoProcessingEngine(private val context: Context) {
                 }
                 videoTrackIndex = muxer.addTrack(format)
                 if (expectedAudioFormat != null) {
-                    audioTrackIndex = muxer.addTrack(expectedAudioFormat)
+                    try {
+                        audioTrackIndex = muxer.addTrack(expectedAudioFormat)
+                        AppLogManager.log(
+                            LogLevel.INFO,
+                            "SafeMediaMuxer",
+                            "Audio track registered in muxer: index $audioTrackIndex"
+                        )
+                    } catch (e: Exception) {
+                        AppLogManager.log(
+                            LogLevel.WARN,
+                            "SafeMediaMuxer",
+                            "Audio track rejected by container (${e.message}). Proceeding video-only."
+                        )
+                        audioTrackIndex = -1
+                    }
                 }
                 muxer.start()
                 isStarted = true
@@ -127,6 +142,8 @@ class VideoProcessingEngine(private val context: Context) {
             selectedFrames.filter { it.isSelected }.map { it.ptsUs }
         } else emptyList()
 
+        var afd: AssetFileDescriptor? = null
+        var audioAfd: AssetFileDescriptor? = null
         var extractor: MediaExtractor? = null
         var audioExtractor: MediaExtractor? = null
         var decoder: MediaCodec? = null
@@ -145,15 +162,13 @@ class VideoProcessingEngine(private val context: Context) {
 
         try {
             extractor = MediaExtractor()
-            val afd = context.contentResolver.openAssetFileDescriptor(inputUri, "r")
+            afd = context.contentResolver.openAssetFileDescriptor(inputUri, "r")
                 ?: throw IllegalArgumentException("Failed to open file descriptor for URI: $inputUri")
-            afd.use { descriptor ->
-                extractor.setDataSource(
-                    descriptor.fileDescriptor,
-                    descriptor.startOffset,
-                    descriptor.length
-                )
-            }
+            extractor.setDataSource(
+                afd.fileDescriptor,
+                afd.startOffset,
+                afd.length
+            )
 
             var videoTrackIndex = -1
             var videoFormat: MediaFormat? = null
@@ -184,12 +199,10 @@ class VideoProcessingEngine(private val context: Context) {
                     "MediaCodecPipeline",
                     "Input audio track detected: ${audioFormat.getString(MediaFormat.KEY_MIME)}"
                 )
-                audioExtractor = MediaExtractor().apply {
-                    val audioAfd = context.contentResolver.openAssetFileDescriptor(inputUri, "r")
-                    if (audioAfd != null) {
-                        audioAfd.use { d ->
-                            setDataSource(d.fileDescriptor, d.startOffset, d.length)
-                        }
+                audioAfd = context.contentResolver.openAssetFileDescriptor(inputUri, "r")
+                if (audioAfd != null) {
+                    audioExtractor = MediaExtractor().apply {
+                        setDataSource(audioAfd.fileDescriptor, audioAfd.startOffset, audioAfd.length)
                         selectTrack(audioTrackIndex)
                     }
                 }
@@ -261,7 +274,7 @@ class VideoProcessingEngine(private val context: Context) {
             val decBufferInfo = MediaCodec.BufferInfo()
             val encBufferInfo = MediaCodec.BufferInfo()
 
-            val audioBuffer = ByteBuffer.allocateDirect(128 * 1024)
+            val audioBuffer = ByteBuffer.allocateDirect(256 * 1024)
             val audioBufferInfo = MediaCodec.BufferInfo()
             var isAudioEos = (audioExtractor == null)
             var lastWrittenAudioPts = -1L
@@ -337,6 +350,8 @@ class VideoProcessingEngine(private val context: Context) {
                         }
                         lastWrittenAudioPts = finalPts
 
+                        audioBuffer.position(0)
+                        audioBuffer.limit(sampleSize)
                         audioBufferInfo.set(0, sampleSize, finalPts, aExt.sampleFlags)
                         mux.writeAudioSample(audioBuffer, audioBufferInfo)
                     }
@@ -593,7 +608,7 @@ class VideoProcessingEngine(private val context: Context) {
             AppLogManager.log(
                 LogLevel.INFO,
                 "MediaCodecPipeline",
-                "MediaCodec transcode finished. Scanned: $totalScanned, Dropped: $droppedFrames, Preserved: $preservedFrames. Video samples written: ${safeMuxer?.videoSamplesWritten}, Audio samples written: ${safeMuxer?.audioSamplesWritten}"
+                "MediaCodec transcode finished. Scanned: $totalScanned, Dropped: $droppedFrames, Preserved: $preservedFrames. Video samples: ${safeMuxer?.videoSamplesWritten}, Audio samples: ${safeMuxer?.audioSamplesWritten}"
             )
         } catch (e: Exception) {
             AppLogManager.log(
@@ -636,9 +651,17 @@ class VideoProcessingEngine(private val context: Context) {
                 extractor?.release()
             } catch (_: Exception) {
             }
+            try {
+                afd?.close()
+            } catch (_: Exception) {
+            }
 
             try {
                 audioExtractor?.release()
+            } catch (_: Exception) {
+            }
+            try {
+                audioAfd?.close()
             } catch (_: Exception) {
             }
 

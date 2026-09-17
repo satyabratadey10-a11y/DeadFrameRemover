@@ -1,6 +1,7 @@
 package com.antigravity.deadframeremover.engine
 
 import android.content.Context
+import android.content.res.AssetFileDescriptor
 import android.graphics.Bitmap
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
@@ -31,10 +32,11 @@ class FrameInspectorEngine(private val context: Context) {
     suspend fun analyzeFrames(
         inputUri: Uri,
         mseThreshold: Double,
-        maxFramesToSample: Int = 120,
+        maxFramesToSample: Int = 240,
         onProgress: (Float, Int, Int) -> Unit
     ): List<FrameItem> = withContext(Dispatchers.Default) {
         val frameList = mutableListOf<FrameItem>()
+        var afd: AssetFileDescriptor? = null
         var extractor: MediaExtractor? = null
         var decoder: MediaCodec? = null
         var packedPrevY: ByteBuffer? = null
@@ -42,11 +44,9 @@ class FrameInspectorEngine(private val context: Context) {
 
         try {
             extractor = MediaExtractor()
-            val afd = context.contentResolver.openAssetFileDescriptor(inputUri, "r")
+            afd = context.contentResolver.openAssetFileDescriptor(inputUri, "r")
                 ?: throw IllegalArgumentException("Failed to open file descriptor for: $inputUri")
-            afd.use { d ->
-                extractor.setDataSource(d.fileDescriptor, d.startOffset, d.length)
-            }
+            extractor.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
 
             var videoTrackIndex = -1
             var videoFormat: MediaFormat? = null
@@ -77,6 +77,8 @@ class FrameInspectorEngine(private val context: Context) {
             )
             decoder.configure(videoFormat, null, null, 0)
             decoder.start()
+
+            packedPrevY = ByteBuffer.allocateDirect(width * height)
 
             AppLogManager.log(
                 LogLevel.INFO,
@@ -139,7 +141,7 @@ class FrameInspectorEngine(private val context: Context) {
 
                                 if (hasPrevFrame && packedPrevY != null && NativeComparator.isLoaded) {
                                     mse = NativeComparator.comparePackedWithYPlane(
-                                        packedPrevY!!,
+                                        packedPrevY,
                                         yBuf, curYPos,
                                         yPlane.rowStride, yPlane.pixelStride,
                                         width, height
@@ -151,7 +153,7 @@ class FrameInspectorEngine(private val context: Context) {
                                 }
 
                                 // Create thumbnail Bitmap using fast native renderer
-                                val thumbBitmap = Bitmap.createBitmap(180, 120, Bitmap.Config.ARGB_8888)
+                                val thumbBitmap = Bitmap.createBitmap(140, 95, Bitmap.Config.ARGB_8888)
                                 if (NativeComparator.isLoaded) {
                                     NativeComparator.yuvToRgbBitmap(
                                         yBuf, curYPos, yPlane.rowStride, yPlane.pixelStride,
@@ -162,18 +164,17 @@ class FrameInspectorEngine(private val context: Context) {
                                     )
                                 }
 
-                                // Pack current frame's Y plane for next consecutive frame comparison
-                                if (packedPrevY == null) {
-                                    packedPrevY = ByteBuffer.allocateDirect(width * height)
-                                }
-                                if (NativeComparator.isLoaded) {
-                                    NativeComparator.packYPlane(
-                                        yBuf, curYPos,
-                                        yPlane.rowStride, yPlane.pixelStride,
-                                        width, height,
-                                        packedPrevY!!
-                                    )
-                                    hasPrevFrame = true
+                                // Update packed baseline Y plane if frame is good (or baseline)
+                                if (!isDead || !hasPrevFrame) {
+                                    if (NativeComparator.isLoaded && packedPrevY != null) {
+                                        NativeComparator.packYPlane(
+                                            yBuf, curYPos,
+                                            yPlane.rowStride, yPlane.pixelStride,
+                                            width, height,
+                                            packedPrevY
+                                        )
+                                        hasPrevFrame = true
+                                    }
                                 }
 
                                 val curPtsUs = bufferInfo.presentationTimeUs
@@ -209,7 +210,7 @@ class FrameInspectorEngine(private val context: Context) {
             AppLogManager.log(
                 LogLevel.INFO,
                 "FrameInspector",
-                "Frame analysis complete. Scanned: ${frameList.size} consecutive frames. Dead: ${frameList.count { it.isDead }}, Good: ${frameList.count { !it.isDead }}"
+                "Frame analysis complete. Scanned: ${frameList.size} frames. Dead: ${frameList.count { it.isDead }}, Good: ${frameList.count { !it.isDead }}"
             )
         } catch (e: Exception) {
             AppLogManager.log(LogLevel.ERROR, "FrameInspector", "Failed to analyze frames: ${e.message}")
@@ -217,6 +218,7 @@ class FrameInspectorEngine(private val context: Context) {
             try { decoder?.stop() } catch (_: Exception) {}
             try { decoder?.release() } catch (_: Exception) {}
             try { extractor?.release() } catch (_: Exception) {}
+            try { afd?.close() } catch (_: Exception) {}
         }
 
         frameList
