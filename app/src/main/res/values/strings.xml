@@ -13,7 +13,7 @@
     <string name="cancel_button">Cancel Processing</string>
     <string name="processing_title">Processing Video Pipeline…</string>
     <string name="success_title">Video Export Completed</string>
-    <string name="audio_notice">Audio Strategy: Audio track is omitted to ensure linear PTS delta retiming without A/V desync.</string>
+    <string name="audio_notice">Audio Strategy: Full audio track preserved and synchronized with frame-accurate time mapping.</string>
 
     <string name="frame_inspector_title">Exact Frame Shower &amp; Selector</string>
     <string name="analyze_frames">Analyze Video Frames</string>

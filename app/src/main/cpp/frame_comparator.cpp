@@ -7,6 +7,85 @@
 extern "C" {
 
 JNIEXPORT jdouble JNICALL
+Java_com_antigravity_deadframeremover_engine_NativeComparator_comparePackedWithYPlane(
+    JNIEnv* env,
+    jobject /* thiz */,
+    jobject packedPrevBuffer,
+    jobject currYBuffer,
+    jint currYOffset,
+    jint currYRowStride,
+    jint currYPixelStride,
+    jint width,
+    jint height
+) {
+    if (!packedPrevBuffer || !currYBuffer || width <= 0 || height <= 0 || currYOffset < 0) {
+        return 999999.0;
+    }
+
+    const auto* prev = static_cast<const uint8_t*>(env->GetDirectBufferAddress(packedPrevBuffer));
+    const auto* curr_base = static_cast<const uint8_t*>(env->GetDirectBufferAddress(currYBuffer));
+    if (!prev || !curr_base) {
+        return 999999.0;
+    }
+
+    const uint8_t* curr = curr_base + currYOffset;
+
+    int sampled_rows = (height + 1) / 2;
+    int sampled_cols = (width + 1) / 2;
+    uint64_t total_samples = static_cast<uint64_t>(sampled_rows) * sampled_cols;
+    if (total_samples == 0) return 0.0;
+
+    uint64_t sum_sq = 0;
+
+    for (int y = 0; y < height; y += 2) {
+        const uint8_t* row_p = prev + (y * width);
+        const uint8_t* row_c = curr + (y * currYRowStride);
+        for (int x = 0; x < width; x += 2) {
+            int32_t diff = static_cast<int32_t>(row_p[x]) - static_cast<int32_t>(row_c[x * currYPixelStride]);
+            sum_sq += static_cast<uint64_t>(diff * diff);
+        }
+    }
+
+    return static_cast<jdouble>(sum_sq) / static_cast<double>(total_samples);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_antigravity_deadframeremover_engine_NativeComparator_packYPlane(
+    JNIEnv* env,
+    jobject /* thiz */,
+    jobject currYBuffer,
+    jint currYOffset,
+    jint currYRowStride,
+    jint currYPixelStride,
+    jint width,
+    jint height,
+    jobject packedDstBuffer
+) {
+    if (!currYBuffer || !packedDstBuffer || width <= 0 || height <= 0 || currYOffset < 0) {
+        return -1;
+    }
+
+    const auto* src_base = static_cast<const uint8_t*>(env->GetDirectBufferAddress(currYBuffer));
+    auto* dst = static_cast<uint8_t*>(env->GetDirectBufferAddress(packedDstBuffer));
+    if (!src_base || !dst) return -2;
+
+    const uint8_t* src = src_base + currYOffset;
+
+    for (int y = 0; y < height; ++y) {
+        const uint8_t* src_row = src + (y * currYRowStride);
+        uint8_t* dst_row = dst + (y * width);
+        if (currYPixelStride == 1) {
+            std::memcpy(dst_row, src_row, width);
+        } else {
+            for (int x = 0; x < width; ++x) {
+                dst_row[x] = src_row[x * currYPixelStride];
+            }
+        }
+    }
+    return 0;
+}
+
+JNIEXPORT jdouble JNICALL
 Java_com_antigravity_deadframeremover_engine_NativeComparator_compareYUVPlanes(
     JNIEnv* env,
     jobject /* thiz */,
@@ -20,29 +99,13 @@ Java_com_antigravity_deadframeremover_engine_NativeComparator_compareYUVPlanes(
     jint yPixelStride,
     jdouble /* threshold */
 ) {
-    if (!bufferPrev || !bufferCurr) {
-        return 999999.0;
-    }
-
-    jlong prev_cap = env->GetDirectBufferCapacity(bufferPrev);
-    jlong curr_cap = env->GetDirectBufferCapacity(bufferCurr);
-    if (prev_cap < 0 || curr_cap < 0) {
+    if (!bufferPrev || !bufferCurr || width <= 0 || height <= 0 || prevOffset < 0 || currOffset < 0) {
         return 999999.0;
     }
 
     const auto* prev_base = static_cast<const uint8_t*>(env->GetDirectBufferAddress(bufferPrev));
     const auto* curr_base = static_cast<const uint8_t*>(env->GetDirectBufferAddress(bufferCurr));
     if (!prev_base || !curr_base) {
-        return 999999.0;
-    }
-
-    if (prevOffset < 0 || currOffset < 0 || width <= 0 || height <= 0) {
-        return 999999.0;
-    }
-
-    jlong max_prev_needed = static_cast<jlong>(prevOffset) + static_cast<jlong>(height - 1) * yRowStride + static_cast<jlong>(width - 1) * yPixelStride;
-    jlong max_curr_needed = static_cast<jlong>(currOffset) + static_cast<jlong>(height - 1) * yRowStride + static_cast<jlong>(width - 1) * yPixelStride;
-    if (max_prev_needed >= prev_cap || max_curr_needed >= curr_cap) {
         return 999999.0;
     }
 
@@ -81,28 +144,12 @@ Java_com_antigravity_deadframeremover_engine_NativeComparator_normalizeYUV420ToN
     if (!yBuffer || !uBuffer || !vBuffer || !dstBuffer) return -1;
     if (width <= 0 || height <= 0 || yOffset < 0 || uOffset < 0 || vOffset < 0 || dstOffset < 0) return -2;
 
-    jlong y_cap   = env->GetDirectBufferCapacity(yBuffer);
-    jlong u_cap   = env->GetDirectBufferCapacity(uBuffer);
-    jlong v_cap   = env->GetDirectBufferCapacity(vBuffer);
-    jlong dst_cap = env->GetDirectBufferCapacity(dstBuffer);
-
-    jlong dst_needed = static_cast<jlong>(dstOffset) + static_cast<jlong>(width) * height * 3 / 2;
-    if (dst_cap < dst_needed) return -3;
-
-    jlong y_needed = static_cast<jlong>(yOffset) + static_cast<jlong>(height - 1) * yRowStride + static_cast<jlong>(width - 1) * yPixelStride;
-    int uv_height = height / 2;
-    int uv_width  = width / 2;
-    jlong u_needed = static_cast<jlong>(uOffset) + static_cast<jlong>(uv_height - 1) * uRowStride + static_cast<jlong>(uv_width - 1) * uPixelStride;
-    jlong v_needed = static_cast<jlong>(vOffset) + static_cast<jlong>(uv_height - 1) * vRowStride + static_cast<jlong>(uv_width - 1) * vPixelStride;
-
-    if (y_cap < y_needed || u_cap < u_needed || v_cap < v_needed) return -4;
-
     const auto* y_base = static_cast<const uint8_t*>(env->GetDirectBufferAddress(yBuffer));
     const auto* u_base = static_cast<const uint8_t*>(env->GetDirectBufferAddress(uBuffer));
     const auto* v_base = static_cast<const uint8_t*>(env->GetDirectBufferAddress(vBuffer));
     auto* dst_base     = static_cast<uint8_t*>(env->GetDirectBufferAddress(dstBuffer));
 
-    if (!y_base || !u_base || !v_base || !dst_base) return -5;
+    if (!y_base || !u_base || !v_base || !dst_base) return -3;
 
     const uint8_t* y_src = y_base + yOffset;
     const uint8_t* u_src = u_base + uOffset;
@@ -125,6 +172,8 @@ Java_com_antigravity_deadframeremover_engine_NativeComparator_normalizeYUV420ToN
 
     // 2. Explicit UV Interleaved Plane Packing (width * (height / 2))
     uint8_t* dst_uv = dst + (width * height);
+    int uv_height = height / 2;
+    int uv_width  = width / 2;
     for (int r = 0; r < uv_height; ++r) {
         const uint8_t* u_row = u_src + (r * uRowStride);
         const uint8_t* v_row = v_src + (r * vRowStride);
@@ -149,7 +198,7 @@ Java_com_antigravity_deadframeremover_engine_NativeComparator_yuvToRgbBitmap(
     jobject dstBitmap
 ) {
     if (!yBuffer || !uBuffer || !vBuffer || !dstBitmap) return -1;
-    if (srcWidth <= 0 || srcHeight <= 0) return -2;
+    if (srcWidth <= 0 || srcHeight <= 0 || yOffset < 0 || uOffset < 0 || vOffset < 0) return -2;
 
     AndroidBitmapInfo info;
     if (AndroidBitmap_getInfo(env, dstBitmap, &info) < 0) return -3;

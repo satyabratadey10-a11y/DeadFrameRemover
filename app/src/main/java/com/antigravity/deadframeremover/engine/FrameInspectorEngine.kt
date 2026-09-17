@@ -37,7 +37,8 @@ class FrameInspectorEngine(private val context: Context) {
         val frameList = mutableListOf<FrameItem>()
         var extractor: MediaExtractor? = null
         var decoder: MediaCodec? = null
-        var cachedPrevY: ByteBuffer? = null
+        var packedPrevY: ByteBuffer? = null
+        var hasPrevFrame = false
 
         try {
             extractor = MediaExtractor()
@@ -136,13 +137,12 @@ class FrameInspectorEngine(private val context: Context) {
                                 val mse: Double
                                 val isDead: Boolean
 
-                                if (cachedPrevY != null && NativeComparator.isLoaded) {
-                                    mse = NativeComparator.compareYUVPlanes(
-                                        cachedPrevY!!, 0,
+                                if (hasPrevFrame && packedPrevY != null && NativeComparator.isLoaded) {
+                                    mse = NativeComparator.comparePackedWithYPlane(
+                                        packedPrevY!!,
                                         yBuf, curYPos,
-                                        width, height,
                                         yPlane.rowStride, yPlane.pixelStride,
-                                        mseThreshold
+                                        width, height
                                     )
                                     isDead = mse <= mseThreshold
                                 } else {
@@ -162,16 +162,19 @@ class FrameInspectorEngine(private val context: Context) {
                                     )
                                 }
 
-                                // Cache current Y plane for next consecutive frame comparison
-                                val yCap = yBuf.capacity()
-                                if (cachedPrevY == null || cachedPrevY!!.capacity() < yCap) {
-                                    cachedPrevY = ByteBuffer.allocateDirect(yCap)
+                                // Pack current frame's Y plane for next consecutive frame comparison
+                                if (packedPrevY == null) {
+                                    packedPrevY = ByteBuffer.allocateDirect(width * height)
                                 }
-                                cachedPrevY!!.clear()
-                                yBuf.position(0)
-                                cachedPrevY!!.put(yBuf)
-                                yBuf.position(curYPos)
-                                cachedPrevY!!.flip()
+                                if (NativeComparator.isLoaded) {
+                                    NativeComparator.packYPlane(
+                                        yBuf, curYPos,
+                                        yPlane.rowStride, yPlane.pixelStride,
+                                        width, height,
+                                        packedPrevY!!
+                                    )
+                                    hasPrevFrame = true
+                                }
 
                                 val curPtsUs = bufferInfo.presentationTimeUs
                                 val seconds = curPtsUs / 1_000_000f

@@ -19,6 +19,26 @@ object NativeComparator {
         }
     }
 
+    external fun comparePackedWithYPlane(
+        packedPrevBuffer: ByteBuffer,
+        currYBuffer: ByteBuffer,
+        currYOffset: Int,
+        currYRowStride: Int,
+        currYPixelStride: Int,
+        width: Int,
+        height: Int
+    ): Double
+
+    external fun packYPlane(
+        currYBuffer: ByteBuffer,
+        currYOffset: Int,
+        currYRowStride: Int,
+        currYPixelStride: Int,
+        width: Int,
+        height: Int,
+        packedDstBuffer: ByteBuffer
+    ): Int
+
     external fun compareYUVPlanes(
         bufferPrev: ByteBuffer,
         prevOffset: Int,
