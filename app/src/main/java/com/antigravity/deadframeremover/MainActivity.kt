@@ -1,11 +1,15 @@
 package com.antigravity.deadframeremover
 
 import android.Manifest
+import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -137,11 +141,12 @@ class VideoProcessingViewModel : ViewModel() {
         _uiState.update { it.copy(frames = updated) }
     }
 
-    fun startExport(engine: VideoProcessingEngine, outputDir: File, useSelection: Boolean = false) {
+    fun startExport(context: android.content.Context, engine: VideoProcessingEngine, useSelection: Boolean = false) {
         val currentUri = _uiState.value.selectedUri ?: return
         if (_uiState.value.isProcessing) return
 
-        val outputFile = File(outputDir, "cleaned_video_${System.currentTimeMillis()}.mp4")
+        val tempFile = File(context.cacheDir, "temp_export_${System.currentTimeMillis()}.mp4")
+        val finalFileName = "cleaned_video_${System.currentTimeMillis()}.mp4"
 
         _uiState.update {
             it.copy(
@@ -152,27 +157,32 @@ class VideoProcessingViewModel : ViewModel() {
         }
         val frames = _uiState.value.frames
         val exportType = if (useSelection && frames.isNotEmpty()) "Selective Frames" else "Threshold-Based"
-        AppLogManager.log(LogLevel.INFO, "Pipeline", "Starting H.264 MediaCodec export ($exportType) to: ${outputFile.name}")
+        AppLogManager.log(LogLevel.INFO, "Pipeline", "Starting H.264 MediaCodec export ($exportType) to Download folder: $finalFileName")
 
         processingJob = viewModelScope.launch {
             try {
                 engine.processVideo(
                     inputUri = currentUri,
-                    outputFile = outputFile,
+                    outputFile = tempFile,
                     mseThreshold = _uiState.value.mseThreshold.toDouble(),
                     selectedFrames = if (useSelection && frames.isNotEmpty()) frames else null
                 ) { progressUpdate ->
                     _uiState.update { it.copy(progress = progressUpdate) }
                 }
+
+                // Move/Save the exported file directly into /storage/emulated/0/Download/
+                val exportedFile = saveToDownloadsFolder(context, tempFile, finalFileName)
+
                 _uiState.update {
                     it.copy(
                         isProcessing = false,
-                        exportedFile = outputFile
+                        exportedFile = exportedFile
                     )
                 }
-                AppLogManager.log(LogLevel.INFO, "Pipeline", "H.264 MediaCodec export completed successfully: ${outputFile.name}")
+                AppLogManager.log(LogLevel.INFO, "Pipeline", "H.264 MediaCodec export completed successfully and saved to: ${exportedFile.absolutePath}")
             } catch (e: Exception) {
                 AppLogManager.log(LogLevel.ERROR, "Pipeline", "MediaCodec export failed: ${e.message}")
+                try { tempFile.delete() } catch (_: Exception) {}
                 _uiState.update {
                     it.copy(
                         isProcessing = false,
@@ -181,6 +191,80 @@ class VideoProcessingViewModel : ViewModel() {
                 }
             }
         }
+    }
+
+    private fun saveToDownloadsFolder(context: android.content.Context, tempFile: File, fileName: String): File {
+        // Target public download folder: /storage/emulated/0/Download/
+        val downloadFolder = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "")
+        if (!downloadFolder.exists()) {
+            downloadFolder.mkdirs()
+        }
+
+        var destFile = File(downloadFolder, fileName)
+        var copySucceeded = false
+
+        try {
+            tempFile.copyTo(destFile, overwrite = true)
+            tempFile.delete()
+            copySucceeded = true
+            AppLogManager.log(LogLevel.INFO, "FileSave", "Saved directly via File API to: ${destFile.absolutePath}")
+        } catch (e: Exception) {
+            AppLogManager.log(LogLevel.WARN, "FileSave", "Direct copy to Download directory failed (${e.message}). Falling back to MediaStore...")
+        }
+
+        if (!copySucceeded) {
+            destFile = saveViaMediaStore(context, tempFile, fileName)
+            try { tempFile.delete() } catch (_: Exception) {}
+        }
+
+        // Notify Android MediaScanner so file is immediately indexed in Download list and Gallery
+        try {
+            MediaScannerConnection.scanFile(
+                context.applicationContext,
+                arrayOf(destFile.absolutePath),
+                arrayOf("video/mp4")
+            ) { path, uri ->
+                AppLogManager.log(LogLevel.INFO, "MediaScanner", "Scanned & indexed to media store: $path ($uri)")
+            }
+        } catch (e: Exception) {
+            AppLogManager.log(LogLevel.WARN, "MediaScanner", "MediaScanner scan failed: ${e.message}")
+        }
+
+        return destFile
+    }
+
+    private fun saveViaMediaStore(context: android.content.Context, tempFile: File, fileName: String): File {
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+            put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+        }
+
+        val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        } else {
+            MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+        }
+
+        val itemUri = context.contentResolver.insert(collection, values)
+            ?: throw IllegalStateException("Failed to create MediaStore entry in Downloads")
+
+        context.contentResolver.openOutputStream(itemUri)?.use { outStream ->
+            tempFile.inputStream().use { inStream ->
+                inStream.copyTo(outStream)
+            }
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            values.clear()
+            values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+            context.contentResolver.update(itemUri, values, null, null)
+        }
+
+        return File("/storage/emulated/0/Download", fileName)
     }
 
     fun cancelProcessing() {
@@ -292,9 +376,8 @@ class MainActivity : ComponentActivity() {
                         viewModel.invertSelection()
                     },
                     onStartExport = { useSelection ->
-                        val outputDir = getExternalFilesDir(null) ?: cacheDir
                         val engine = processingEngine ?: VideoProcessingEngine(applicationContext).also { processingEngine = it }
-                        viewModel.startExport(engine, outputDir, useSelection)
+                        viewModel.startExport(applicationContext, engine, useSelection)
                     },
                     onCancelExport = {
                         viewModel.cancelProcessing()

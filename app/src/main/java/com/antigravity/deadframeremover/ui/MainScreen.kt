@@ -508,7 +508,13 @@ fun MainScreen(
                         }
                         Text(
                             text = "Output file: ${exportedFile.name} (${exportedFile.length() / 1024} KB)",
-                            style = MaterialTheme.typography.bodySmall
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "Saved in Downloads: ${exportedFile.absolutePath}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Button(
                             onClick = { onOpenExportedVideo(exportedFile) },

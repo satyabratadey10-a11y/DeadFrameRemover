@@ -53,13 +53,13 @@ jobs:
       - name: Prepare Release APK Name
         run: |
           RELEASE_APK=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
-          cp "$RELEASE_APK" app/build/outputs/apk/release/DeadFrameRemover-v1.3.1.apk
+          cp "$RELEASE_APK" app/build/outputs/apk/release/DeadFrameRemover-v1.3.2.apk
 
       - name: Publish GitHub Release
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.3.1-mediacodec
-          name: "DeadFrameRemover v1.3.1 (Fixed FileDescriptor Lifecycle, Live Selection UI & Robust Export)"
-          body: "Release fixing premature AssetFileDescriptor closure, audio buffer limit alignment, interactive frame card selection UI, and export pipeline stability."
-          files: app/build/outputs/apk/release/DeadFrameRemover-v1.3.1.apk
+          tag_name: v1.3.2-mediacodec
+          name: "DeadFrameRemover v1.3.2 (Direct Public Downloads Folder Export & MediaScanner Indexing)"
+          body: "Release saving exported MP4 videos directly into public /storage/emulated/0/Download/ with MediaScanner indexing, FileProvider compatibility, and audio synchronization."
+          files: app/build/outputs/apk/release/DeadFrameRemover-v1.3.2.apk
